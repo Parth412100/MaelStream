@@ -6,6 +6,7 @@ const magnet = process.argv[2];
 const port = parseInt(process.argv[3], 10) || 8888;
 const tempDir = process.argv[4] || process.env.TEMP;
 const readyFile = process.argv[5];
+const doneFile = process.argv[6];
 
 const client = new WebTorrent({ dht: true, tracker: true, utp: false });
 let serverStarted = false;
@@ -88,6 +89,8 @@ function createFileServer(file, port) {
                 lastUpdate = now;
                 if (progress < 100) {
                     console.error(`  [WebTorrent] ${progress}% of ${totalGB} GB | ${formatSpeed(speed)} | ${formatBytes(downloaded)} downloaded | ETA ${formatTime(remaining)} | ${peers} peers`);
+                } else if (progress >= 100) {
+                    console.error(`  [WebTorrent] 100% of ${totalGB} GB | download complete`);
                 }
             }
         }, 2000);
@@ -113,6 +116,10 @@ client.add(magnet, { path: tempDir }, (t) => {
     console.error(`\n  [WebTorrent] Downloading: ${file.name}`);
     console.error(`  [WebTorrent] Size: ${(file.length / 1e9).toFixed(2)} GB`);
     console.error(`  [WebTorrent] Looking for peers...`);
+    torrent.on('done', () => {
+        console.error(`\n  [WebTorrent] Download complete!`);
+        if (doneFile) { try { fs.writeFileSync(doneFile, 'done'); } catch {} }
+    });
     createFileServer(file, port);
 });
 

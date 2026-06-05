@@ -7,6 +7,9 @@ param(
     [switch]$Aria2,
     [switch]$NoFallback,
     [switch]$Help,
+    [switch]$Download,
+    [Alias('o')]
+    [string]$OutDir = "$env:USERPROFILE\Downloads\MaelStream",
     [Alias('e')]
     [ValidateSet('webtorrent', 'peerflix', 'aria2c')]
     [string]$Engine
@@ -15,31 +18,38 @@ param(
 if ($Help -or $Query -eq '-?' -or $Query -eq '--help' -or $Query -eq '/?') {
     Write-Host @"
 
- MaelStream v1.0 - Torrent Streaming CLI
+  MaelStream v1.0 - Torrent Streaming CLI
 
  USAGE:
-   .\watch.ps1 "movie name"              Search and stream
-   .\watch.ps1 "movie name" -Auto        Auto-select best result
-   .\watch.ps1 "movie name" -Engine peerflix   Use specific engine
+    .\watch.ps1 "movie name"              Search and stream
+    .\watch.ps1 "movie name" -Auto        Auto-select best result
+    .\watch.ps1 "movie name" -Download    Download (no streaming)
+    .\watch.ps1 "movie name" -Engine peerflix   Use specific engine
 
  ENGINES:
-   webtorrent (default) - WebTorrent library, best peer discovery
-   peerflix              - torrent-stream backend
-   aria2c                - C++ engine, fallback
+    webtorrent (default) - WebTorrent library, best peer discovery
+    peerflix              - torrent-stream backend
+    aria2c                - C++ engine, fallback
+
+ DOWNLOAD:
+    -Download        Download the file instead of streaming
+    -OutDir <path>   Save to this folder (default: ~\Downloads\MaelStream)
 
  AUTO-FALLBACK:
-   If one engine fails to find peers, the next is tried automatically.
-   Use -NoFallback to disable this.
+    If one engine fails to find peers, the next is tried automatically.
+    Use -NoFallback to disable this.
 
  EXAMPLES:
-   .\watch.ps1 "mortal kombat 2021"
-   .\watch.ps1 "inception 2010" -Auto
-   .\watch.ps1 "tenet" -e peerflix
+    .\watch.ps1 "mortal kombat 2021"
+    .\watch.ps1 "inception 2010" -Auto
+    .\watch.ps1 "inception 2010" -Download
+    .\watch.ps1 "tenet" -e peerflix
 
  TIPS:
-   . Pick torrents with 100+ seeders for best speed
-   . Close mpv to stop download and clean up temp files
-   . Run .\setup.ps1 first to install dependencies
+    . Pick torrents with 100+ seeders for best speed
+    . Close mpv to stop streaming and clean up temp files
+    . For downloads, press Ctrl+C to cancel (partial file saved)
+    . Run .\setup.ps1 first to install dependencies
 
 "@ -ForegroundColor Cyan
     exit
@@ -162,13 +172,14 @@ if ($Auto) {
     Ok "Auto-selected #0 ($($results[0].seeders) seeders)"
 } else {
     Write-Host "`n  Choose result [0-$($results.Count-1)]" -NoNewline -ForegroundColor $C.Cyan
-    Write-Host "  or engine: [p]eerflix [a]ria2c [q]uit" -ForegroundColor $C.Gray
+    Write-Host "  or: [p]eerflix [a]ria2c [d]ownload [q]uit" -ForegroundColor $C.Gray
     Write-Host "  (just press Enter for best result, auto-fallback on)" -ForegroundColor $C.Gray
     $input = Read-Host "`n  Your choice"
 
     if ($input -eq 'q') { Write-Host "  Bye!" -ForegroundColor $C.Cyan; exit }
     if ($input -eq 'p') { $userPickedEngine = "peerflix"; $choice = 0; Ok "Engine: Peerflix (no auto-fallback)" }
     elseif ($input -eq 'a') { $userPickedEngine = "aria2c"; $choice = 0; Ok "Engine: aria2c (no auto-fallback)" }
+    elseif ($input -eq 'd') { $Download = $true; $choice = 0; $Auto = $true; Ok "Download mode (press d again or -Download flag)" }
     elseif ($input -eq '' -or $input -match '^\d+$') {
         $choice = if ($input -eq '') { 0 } else { [int]$input }
         if ($choice -ge $results.Count) { Err "Invalid choice. Pick 0-$($results.Count-1)" }
@@ -181,6 +192,16 @@ $name = $selected.name
 $magnet = Make-Magnet $hash $name
 $seeds = $selected.seeders
 $totalSize = [long]$selected.size
+
+# ─── Helper: Sanitize filename ────────────────────────────────────────────
+
+function Sanitize-FileName($name) {
+    $invalid = [System.IO.Path]::GetInvalidFileNameChars()
+    $valid = $name.ToCharArray() | ForEach-Object {
+        if ($_ -in $invalid) { '_' } else { $_ }
+    }
+    return -join $valid
+}
 
 # ─── Engine functions ────────────────────────────────────────────────────
 
@@ -289,54 +310,208 @@ function Stream-Aria2c($magnet, $totalSize) {
     return $true
 }
 
+# ─── Save (download) functions ───────────────────────────────────────────
+
+function Save-WebTorrent($magnet, $totalSize, $outDir) {
+    $tempDir = "$env:TEMP\wtsave_$(Get-Random)"
+    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+    $port = 8889
+    $readyFile = "$env:TEMP\wt_ready_$(Get-Random).tmp"
+    $doneFile = "$env:TEMP\wt_done_$(Get-Random).tmp"
+
+    Info "WebTorrent: downloading..."
+    $proc = Start-Process -FilePath "node" -NoNewWindow -PassThru -ArgumentList @(
+        "$scriptDir\stream-webtorrent.js", "$magnet", "$port", "$tempDir", "$readyFile", "$doneFile"
+    )
+
+    $timeout = 120; $elapsed = 0
+    while (!(Test-Path $readyFile) -and $elapsed -lt $timeout) {
+        Start-Sleep -Seconds 2; $elapsed += 2
+        if ($proc.HasExited -and !(Test-Path $readyFile)) {
+            Write-Host ""
+            Warn "WebTorrent failed to start."
+            if (-not $proc.HasExited) { $proc.Kill() }
+            Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+            Remove-Item -Force $readyFile, $doneFile -ErrorAction SilentlyContinue
+            return $false
+        }
+    }
+    if (!(Test-Path $readyFile)) {
+        Warn "WebTorrent timed out starting download."
+        if (-not $proc.HasExited) { $proc.Kill() }
+        Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+        Remove-Item -Force $readyFile, $doneFile -ErrorAction SilentlyContinue
+        return $false
+    }
+    Remove-Item -Force $readyFile -ErrorAction SilentlyContinue
+
+    Info "Downloading... (waiting for completion)"
+    while (!(Test-Path $doneFile)) {
+        Start-Sleep -Seconds 2
+        if ($proc.HasExited -and !(Test-Path $doneFile)) {
+            Warn "WebTorrent process exited before download completed."
+            Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+            Remove-Item -Force $doneFile -ErrorAction SilentlyContinue
+            return $false
+        }
+    }
+    Remove-Item -Force $doneFile -ErrorAction SilentlyContinue
+
+    $files = Get-ChildItem -Path $tempDir -File -ErrorAction SilentlyContinue | Where-Object Length -gt 1MB
+    $largest = $files | Sort-Object Length -Descending | Select-Object -First 1
+    if (-not $largest) {
+        Warn "No files found in download."
+        if (-not $proc.HasExited) { $proc.Kill() }
+        Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+        return $false
+    }
+
+    if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir -Force | Out-Null }
+    $destName = Sanitize-FileName $largest.Name
+    $destPath = Join-Path $outDir $destName
+    if (Test-Path $destPath) {
+        $base = [System.IO.Path]::GetFileNameWithoutExtension($destName)
+        $ext = [System.IO.Path]::GetExtension($destName)
+        $destPath = Join-Path $outDir "$base`_$((Get-Date -Format 'yyyyMMdd_HHmmss'))$ext"
+    }
+    Move-Item -Path $largest.FullName -Destination $destPath -Force
+    Ok "Saved: $destPath"
+
+    if (-not $proc.HasExited) { $proc.Kill() }
+    Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+    return $true
+}
+
+function Save-Aria2c($magnet, $totalSize, $outDir) {
+    if (-not (Get-Command aria2c -ErrorAction SilentlyContinue)) {
+        Warn "aria2c not installed - skipping."
+        return $false
+    }
+    $tempDir = "$env:TEMP\aria2save_$(Get-Random)"
+    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+    Info "aria2c: downloading..."
+
+    $ariaArgs = @(
+        "--max-connection-per-server=16", "--split=16", "--min-split-size=1M"
+        "--bt-max-peers=200", "--seed-time=0", "--enable-dht=true"
+        "--dht-listen-port=6881", "--listen-port=6881", "--max-overall-upload-limit=1K"
+        "--file-allocation=none", "--allow-overwrite=true", "--summary-interval=5"
+        "--console-log-level=error", "--dir=$tempDir", "$magnet"
+    )
+    $ariaProc = Start-Process -FilePath "aria2c" -ArgumentList $ariaArgs -NoNewWindow -PassThru
+
+    $file = $null; $timeout = 86400; $elapsed = 0
+    while (!$file -and $elapsed -lt $timeout) {
+        Start-Sleep -Seconds 5; $elapsed += 5
+        if ($ariaProc.HasExited) {
+            # aria2c exited - check if we have files
+            $files = Get-ChildItem -Path $tempDir -File -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch '\.aria2$' -and $_.Length -gt 1MB }
+            if ($files.Count -gt 0) { $file = $files[0].FullName; break }
+            Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+            return $false
+        }
+        $files = Get-ChildItem -Path $tempDir -File -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch '\.aria2$' -and $_.Length -gt 1MB }
+        if ($files.Count -gt 0) {
+            # Check if download is complete (aria2c process ended, or file stopped growing)
+            $currentSize = ($files | Measure-Object -Property Length -Sum).Sum
+            if ($currentSize -ge $totalSize -or $ariaProc.HasExited) {
+                $file = ($files | Sort-Object Length -Descending | Select-Object -First 1).FullName
+                break
+            }
+        }
+    }
+    if (-not $file) {
+        if (-not $ariaProc.HasExited) { $ariaProc.Kill() }
+        Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+        return $false
+    }
+
+    if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir -Force | Out-Null }
+    $destName = Sanitize-FileName (Split-Path $file -Leaf)
+    $destPath = Join-Path $outDir $destName
+    if (Test-Path $destPath) {
+        $base = [System.IO.Path]::GetFileNameWithoutExtension($destName)
+        $ext = [System.IO.Path]::GetExtension($destName)
+        $destPath = Join-Path $outDir "$base`_$((Get-Date -Format 'yyyyMMdd_HHmmss'))$ext"
+    }
+    Move-Item -Path $file -Destination $destPath -Force
+    Ok "Saved: $destPath"
+
+    if (-not $ariaProc.HasExited) { $ariaProc.Kill() }
+    Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+    return $true
+}
+
 # ─── Launch with fallback chain ─────────────────────────────────────────
 
-Section "Starting stream"
-Write-Host "  Title:    $name" -ForegroundColor $C.Green
-Write-Host "  Size:     $('{0:N2}' -f ($totalSize/1GB)) GB" -ForegroundColor $C.Cyan
-Write-Host "  Seeders:  $seeds" -ForegroundColor $C.Cyan
-if ($userPickedEngine) {
-    Write-Host "  Engine:   $userPickedEngine (manual selection, no fallback)" -ForegroundColor $C.Magenta
+if ($Download) {
+    Section "Downloading"
+    Write-Host "  Title:    $name" -ForegroundColor $C.Green
+    Write-Host "  Size:     $('{0:N2}' -f ($totalSize/1GB)) GB" -ForegroundColor $C.Cyan
+    Write-Host "  Seeders:  $seeds" -ForegroundColor $C.Cyan
+    Write-Host "  Save to:  $OutDir" -ForegroundColor $C.Magenta
+    Write-Host "  Press Ctrl+C to cancel`n" -ForegroundColor $C.Gray
+
+    $engines = if ($userPickedEngine) { @($userPickedEngine) } else { @("webtorrent", "aria2c") }
+    $saved = $false
+    $attempted = @()
+
+    foreach ($engine in $engines) {
+        $attempted += $engine
+        Write-Host "  Trying engine: $engine" -ForegroundColor $C.Yellow
+        $result = switch ($engine) {
+            "webtorrent" { Save-WebTorrent $magnet $totalSize $OutDir }
+            "aria2c"     { Save-Aria2c $magnet $totalSize $OutDir }
+        }
+        if ($result) { $saved = $true; break }
+        Write-Host "  [$engine] failed." -ForegroundColor $C.Red
+        if (-not $NoFallback -and $engine -ne $engines[-1]) {
+            Write-Host "  -> Falling back to next engine..." -ForegroundColor $C.Yellow
+        }
+    }
+    if (-not $saved) { Write-Host ""; Err "All engines failed: $($attempted -join ', ')" }
 } else {
-    Write-Host "  Engine:   webtorrent (auto-fallback on: peerflix -> aria2c)" -ForegroundColor $C.Magenta
-}
-Write-Host "  Press Ctrl+C to stop at any time`n" -ForegroundColor $C.Gray
-
-$engines = @()
-
-if ($userPickedEngine) {
-    if (-not $PSBoundParameters.ContainsKey('NoFallback')) { $NoFallback = $true }
-    switch ($userPickedEngine) {
-        "webtorrent" { $engines = @("webtorrent") }
-        "peerflix"   { $engines = @("peerflix") }
-        "aria2c"     { $engines = @("aria2c") }
+    Section "Starting stream"
+    Write-Host "  Title:    $name" -ForegroundColor $C.Green
+    Write-Host "  Size:     $('{0:N2}' -f ($totalSize/1GB)) GB" -ForegroundColor $C.Cyan
+    Write-Host "  Seeders:  $seeds" -ForegroundColor $C.Cyan
+    if ($userPickedEngine) {
+        Write-Host "  Engine:   $userPickedEngine (manual selection, no fallback)" -ForegroundColor $C.Magenta
+    } else {
+        Write-Host "  Engine:   webtorrent (auto-fallback on: peerflix -> aria2c)" -ForegroundColor $C.Magenta
     }
-} else {
-    $engines = @("webtorrent", "peerflix", "aria2c")
-}
+    Write-Host "  Press Ctrl+C to stop at any time`n" -ForegroundColor $C.Gray
 
-$streamed = $false
-$attempted = @()
-
-foreach ($engine in $engines) {
-    $attempted += $engine
-    Write-Host "  Trying engine: $engine" -ForegroundColor $C.Yellow
-
-    $result = switch ($engine) {
-        "webtorrent" { Stream-WebTorrent $magnet $totalSize }
-        "peerflix"   { Stream-Peerflix $magnet }
-        "aria2c"     { Stream-Aria2c $magnet $totalSize }
+    $engines = @()
+    if ($userPickedEngine) {
+        if (-not $PSBoundParameters.ContainsKey('NoFallback')) { $NoFallback = $true }
+        switch ($userPickedEngine) {
+            "webtorrent" { $engines = @("webtorrent") }
+            "peerflix"   { $engines = @("peerflix") }
+            "aria2c"     { $engines = @("aria2c") }
+        }
+    } else {
+        $engines = @("webtorrent", "peerflix", "aria2c")
     }
 
-    if ($result) { $streamed = $true; break }
-
-    Write-Host "  [$engine] failed." -ForegroundColor $C.Red
-    if (-not $NoFallback -and $engine -ne $engines[-1]) {
-        Write-Host "  -> Falling back to next engine..." -ForegroundColor $C.Yellow
+    $streamed = $false
+    $attempted = @()
+    foreach ($engine in $engines) {
+        $attempted += $engine
+        Write-Host "  Trying engine: $engine" -ForegroundColor $C.Yellow
+        $result = switch ($engine) {
+            "webtorrent" { Stream-WebTorrent $magnet $totalSize }
+            "peerflix"   { Stream-Peerflix $magnet }
+            "aria2c"     { Stream-Aria2c $magnet $totalSize }
+        }
+        if ($result) { $streamed = $true; break }
+        Write-Host "  [$engine] failed." -ForegroundColor $C.Red
+        if (-not $NoFallback -and $engine -ne $engines[-1]) {
+            Write-Host "  -> Falling back to next engine..." -ForegroundColor $C.Yellow
+        }
     }
-}
-
-if (-not $streamed) {
-    Write-Host ""
-    Err "All engines failed: $($attempted -join ', ')"
+    if (-not $streamed) {
+        Write-Host ""
+        Err "All engines failed: $($attempted -join ', ')"
+    }
 }
