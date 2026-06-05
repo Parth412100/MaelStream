@@ -8,6 +8,8 @@ param(
     [switch]$NoFallback,
     [switch]$Help,
     [switch]$Download,
+    [Alias('k')]
+    [switch]$Keep,
     [Alias('o')]
     [string]$OutDir = "$env:USERPROFILE\Downloads\MaelStream",
     [Alias('e')]
@@ -21,10 +23,11 @@ if ($Help -or $Query -eq '-?' -or $Query -eq '--help' -or $Query -eq '/?') {
   MaelStream v1.0 - Torrent Streaming CLI
 
  USAGE:
-    .\watch.ps1 "movie name"              Search and stream
-    .\watch.ps1 "movie name" -Auto        Auto-select best result
-    .\watch.ps1 "movie name" -Download    Download (no streaming)
-    .\watch.ps1 "movie name" -Engine peerflix   Use specific engine
+    .\watch.ps1 "movie name"                     Search and stream
+    .\watch.ps1 "movie name" -Auto               Auto-select best result
+    .\watch.ps1 "movie name" -Download           Download (no streaming)
+    .\watch.ps1 "movie name" -Keep               Stream + save file after close
+    .\watch.ps1 "movie name" -Engine peerflix    Use specific engine
 
  ENGINES:
     webtorrent (default) - WebTorrent library, best peer discovery
@@ -33,6 +36,7 @@ if ($Help -or $Query -eq '-?' -or $Query -eq '--help' -or $Query -eq '/?') {
 
  DOWNLOAD:
     -Download        Download the file instead of streaming
+    -Keep            Stream now, keep the file in OutDir when done
     -OutDir <path>   Save to this folder (default: ~\Downloads\MaelStream)
 
  AUTO-FALLBACK:
@@ -223,7 +227,7 @@ function Get-ShortHash($str) {
 
 # ─── Engine functions ────────────────────────────────────────────────────
 
-function Stream-WebTorrent($magnet, $totalSize) {
+function Stream-WebTorrent($magnet, $totalSize, $keep, $outDir, $name) {
     $tempDir = "$env:TEMP\wtstream_$(Get-Random)"
     New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
     $port = 8889
@@ -260,6 +264,28 @@ function Stream-WebTorrent($magnet, $totalSize) {
     Start-Process -Wait -FilePath mpv -ArgumentList "--vo=direct3d", "--cache=yes", "--cache-secs=120", "--demuxer-readahead-secs=60", "http://127.0.0.1:$port/"
 
     Write-Host "`n  Cleaning up..." -ForegroundColor $C.Yellow
+    if ($keep) {
+        $videoExts = @("*.mkv", "*.mp4", "*.avi", "*.webm", "*.mov", "*.m4v")
+        $file = Get-ChildItem -Path $tempDir -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $videoExts -contains "*$($_.Extension)" } |
+            Sort-Object Length -Descending | Select-Object -First 1
+        if ($file) {
+            $safeName = Sanitize-FileName $name
+            $dest = Join-Path $outDir "$safeName$($file.Extension)"
+            $counter = 1
+            while (Test-Path $dest) {
+                $dest = Join-Path $outDir "${safeName}_$counter$($file.Extension)"
+                $counter++
+            }
+            New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+            Move-Item -Path $file.FullName -Destination $dest -Force -ErrorAction SilentlyContinue
+            if (Test-Path $dest) {
+                Write-Host "  Saved to: $dest" -ForegroundColor $C.Green
+            }
+        } else {
+            Warn "Could not find video file to keep."
+        }
+    }
     if (-not $proc.HasExited) { $proc.Kill() }
     Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
     return $true
@@ -279,7 +305,7 @@ function Stream-Peerflix($magnet) {
     return $true
 }
 
-function Stream-Aria2c($magnet, $totalSize) {
+function Stream-Aria2c($magnet, $totalSize, $keep, $outDir, $name) {
     if (-not (Get-Command aria2c -ErrorAction SilentlyContinue)) {
         Warn "aria2c not installed - skipping."
         return $false
@@ -323,6 +349,33 @@ function Stream-Aria2c($magnet, $totalSize) {
     Start-Process -Wait -FilePath mpv -ArgumentList "--vo=direct3d", "--cache=yes", "--cache-secs=120", "--demuxer-readahead-secs=60", "http://127.0.0.1:$port/"
 
     Write-Host "`n  Cleaning up..." -ForegroundColor $C.Yellow
+    if ($keep) {
+        $videoExts = @("*.mkv", "*.mp4", "*.avi", "*.webm", "*.mov", "*.m4v")
+        $savedFile = Get-ChildItem -Path $tempDir -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $videoExts -contains "*$($_.Extension)" -and $_.Length -gt 1MB } |
+            Sort-Object Length -Descending | Select-Object -First 1
+        if (-not $savedFile) {
+            $savedFile = Get-ChildItem -Path $tempDir -File -ErrorAction SilentlyContinue |
+                Where-Object { $_ -notmatch '\.aria2$' } |
+                Sort-Object Length -Descending | Select-Object -First 1
+        }
+        if ($savedFile) {
+            $safeName = Sanitize-FileName $name
+            $dest = Join-Path $outDir "$safeName$($savedFile.Extension)"
+            $counter = 1
+            while (Test-Path $dest) {
+                $dest = Join-Path $outDir "${safeName}_$counter$($savedFile.Extension)"
+                $counter++
+            }
+            New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+            Move-Item -Path $savedFile.FullName -Destination $dest -Force -ErrorAction SilentlyContinue
+            if (Test-Path $dest) {
+                Write-Host "  Saved to: $dest" -ForegroundColor $C.Green
+            }
+        } else {
+            Warn "Could not find file to keep."
+        }
+    }
     if (-not $serverProc.HasExited) { $serverProc.Kill() }
     if (-not $ariaProc.HasExited) { $ariaProc.Kill() }
     Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
@@ -578,9 +631,9 @@ if ($Download) {
         $attempted += $engine
         Write-Host "  Trying engine: $engine" -ForegroundColor $C.Yellow
         $result = switch ($engine) {
-            "webtorrent" { Stream-WebTorrent $magnet $totalSize }
+            "webtorrent" { Stream-WebTorrent $magnet $totalSize $Keep $OutDir $name }
             "peerflix"   { Stream-Peerflix $magnet }
-            "aria2c"     { Stream-Aria2c $magnet $totalSize }
+            "aria2c"     { Stream-Aria2c $magnet $totalSize $Keep $OutDir $name }
         }
         if ($result) { $streamed = $true; break }
         Write-Host "  [$engine] failed." -ForegroundColor $C.Red
