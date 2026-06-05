@@ -1,0 +1,11 @@
+node_modules/
+package-lock.json
+*.tmp
+*.log
+backup_windows
+automate.bat
+lock.bat
+lock.ps1
+setup_lock_task.ps1
+mount.bat
+unmount.bat
