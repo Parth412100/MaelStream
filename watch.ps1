@@ -247,7 +247,7 @@ function Stream-WebTorrent($magnet, $totalSize) {
     Remove-Item -Force $readyFile -ErrorAction SilentlyContinue
 
     Write-Host "  Launching mpv... (close mpv to stop)" -ForegroundColor $C.Green
-    mpv --cache=yes --cache-secs=120 --demuxer-readahead-secs=60 "http://127.0.0.1:$port/"
+    Start-Process -Wait -FilePath mpv -ArgumentList "--vo=direct3d", "--cache=yes", "--cache-secs=120", "--demuxer-readahead-secs=60", "http://127.0.0.1:$port/"
 
     Write-Host "`n  Cleaning up..." -ForegroundColor $C.Yellow
     if (-not $proc.HasExited) { $proc.Kill() }
@@ -310,7 +310,7 @@ function Stream-Aria2c($magnet, $totalSize) {
     Remove-Item -Force $svReadyFile -ErrorAction SilentlyContinue
 
     Write-Host "  Launching mpv... (close mpv to stop)" -ForegroundColor $C.Green
-    mpv --cache=yes --cache-secs=120 --demuxer-readahead-secs=60 "http://127.0.0.1:$port/"
+    Start-Process -Wait -FilePath mpv -ArgumentList "--vo=direct3d", "--cache=yes", "--cache-secs=120", "--demuxer-readahead-secs=60", "http://127.0.0.1:$port/"
 
     Write-Host "`n  Cleaning up..." -ForegroundColor $C.Yellow
     if (-not $serverProc.HasExited) { $serverProc.Kill() }
