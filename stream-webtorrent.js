@@ -1,7 +1,6 @@
 const WebTorrent = require('webtorrent');
 const http = require('http');
 const fs = require('fs');
-const path = require('path');
 
 const magnet = process.argv[2];
 const port = parseInt(process.argv[3], 10) || 8888;
@@ -9,6 +8,31 @@ const tempDir = process.argv[4] || process.env.TEMP;
 const readyFile = process.argv[5];
 
 const client = new WebTorrent({ dht: true, tracker: true, utp: false });
+let serverStarted = false;
+
+function formatTime(seconds) {
+    if (seconds <= 0 || !isFinite(seconds)) return '--:--';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+}
+
+function formatSpeed(bytesPerSec) {
+    if (bytesPerSec <= 0) return '0 B/s';
+    const units = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
+    const i = Math.min(Math.floor(Math.log(bytesPerSec) / Math.log(1024)), units.length - 1);
+    return (bytesPerSec / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
+}
+
+function formatBytes(bytes) {
+    if (bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+    return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
+}
 
 function createFileServer(file, port) {
     const totalSize = file.length;
@@ -45,24 +69,51 @@ function createFileServer(file, port) {
         }
     });
     server.listen(port, () => {
+        serverStarted = true;
         try { fs.writeFileSync(readyFile, 'ready'); } catch {}
-        console.error(`Stream ready: http://127.0.0.1:${port}/`);
+        console.error(`\n  [WebTorrent] Stream ready!`);
+        console.error(`  [WebTorrent] Server: http://127.0.0.1:${port}/`);
+        // Show progress line
+        const totalGB = (totalSize / 1e9).toFixed(2);
+        let lastUpdate = 0;
+        setInterval(() => {
+            const downloaded = torrent.downloaded;
+            const speed = torrent.downloadSpeed;
+            const progress = (torrent.progress * 100).toFixed(1);
+            const peers = torrent.numPeers;
+            const remaining = speed > 0 ? (totalSize - downloaded) / speed : 0;
+            // Only line if changed
+            const now = Date.now();
+            if (now - lastUpdate > 2000) {
+                lastUpdate = now;
+                if (progress < 100) {
+                    console.error(`  [WebTorrent] ${progress}% of ${totalGB} GB | ${formatSpeed(speed)} | ${formatBytes(downloaded)} downloaded | ETA ${formatTime(remaining)} | ${peers} peers`);
+                }
+            }
+        }, 2000);
     });
 }
 
-client.add(magnet, { path: tempDir }, (torrent) => {
+let torrent = null;
+
+client.add(magnet, { path: tempDir }, (t) => {
+    torrent = t;
     const file = torrent.files[0];
     if (!file) {
-        console.error('No files in torrent');
+        console.error('\n  [WebTorrent] No files found in torrent.');
         process.exit(1);
     }
-    console.error(`Downloading: ${file.name} (${(file.length / 1e9).toFixed(2)} GB)`);
-    console.error(`Peers: ${torrent.numPeers}`);
+    console.error(`\n  [WebTorrent] Downloading: ${file.name}`);
+    console.error(`  [WebTorrent] Size: ${(file.length / 1e9).toFixed(2)} GB`);
+    console.error(`  [WebTorrent] Looking for peers...`);
     createFileServer(file, port);
 });
 
 setTimeout(() => {
-    process.exit(1);
+    if (!serverStarted) {
+        console.error('\n  [WebTorrent] Timed out after 3 minutes. No peers found.');
+        process.exit(1);
+    }
 }, 180000);
 
 process.on('SIGTERM', () => { if (client) client.destroy(() => process.exit(0)); });

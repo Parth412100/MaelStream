@@ -2,7 +2,25 @@
 
 **A CLI torrent streaming pipeline for Windows** — search The Pirate Bay, pick a torrent, and stream directly to `mpv` with zero buffering ceremony.
 
-Three engines under the hood — WebTorrent (default), Peerflix, aria2c — each with its own streaming architecture. If one fails, the next takes over.
+Three engines: WebTorrent (default), Peerflix, aria2c.
+
+---
+
+## Quick Start
+
+```powershell
+# 1. Clone
+git clone https://github.com/Parth412100/MaelStream.git
+cd MaelStream
+
+# 2. Auto-setup (installs everything)
+.\setup.ps1
+
+# 3. Stream!
+.\watch.ps1 "mortal kombat 2021"
+```
+
+That's it. The setup script checks for Node.js, mpv, WebTorrent library, peerflix, and aria2c — installing any that are missing.
 
 ---
 
