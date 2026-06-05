@@ -58,6 +58,11 @@ if ($Help -or $Query -eq '-?' -or $Query -eq '--help' -or $Query -eq '/?') {
 $ErrorActionPreference = "Stop"
 $ErrorView = "NormalView"
 
+# Cleanup stale temp dirs on any exit
+Register-EngineEvent -SourceIdentifier PowerShell.Exiting -SupportEvent -Action {
+    Get-ChildItem "$env:TEMP" -Directory -ErrorAction SilentlyContinue | Where-Object Name -match '^(wtsave|aria2save|wtstream|aria2stream)_' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+} | Out-Null
+
 $C = @{ Green = "Green"; Cyan = "Cyan"; Yellow = "Yellow"; Red = "Red"; Gray = "DarkGray"; Magenta = "Magenta" }
 
 function Section($msg) { Write-Host "`n==> $msg" -ForegroundColor $C.Cyan }
@@ -358,7 +363,8 @@ function Save-WebTorrent($magnet, $totalSize, $outDir) {
             $pct = [math]::Round($dl / $totalSize * 100, 1)
             if ($pct -ne $lastProgress) {
                 $lastProgress = $pct
-                Info "Downloaded: $pct% ($('{0:N2}' -f ($dl/1GB)) GB / $('{0:N2}' -f ($totalSize/1GB)) GB)")
+                $dlGb = [math]::Round($dl/1GB, 2); $totalGb = [math]::Round($totalSize/1GB, 2)
+                Info "Downloaded: $pct% (${dlGb} GB / ${totalGb} GB)"
             }
         }
         if ($proc.HasExited -and !(Test-Path $doneFile)) {
