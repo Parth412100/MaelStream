@@ -23,9 +23,9 @@ if ($Help -or $Query -eq '-?' -or $Query -eq '--help' -or $Query -eq '/?') {
    .\watch.ps1 "movie name" -Engine peerflix   Use specific engine
 
  ENGINES:
-   webtorrent (default) — WebTorrent library, best peer discovery
-   peerflix              — torrent-stream backend
-   aria2c                — C++ engine, fallback
+   webtorrent (default) - WebTorrent library, best peer discovery
+   peerflix              - torrent-stream backend
+   aria2c                - C++ engine, fallback
 
  AUTO-FALLBACK:
    If one engine fails to find peers, the next is tried automatically.
@@ -200,7 +200,7 @@ function Stream-WebTorrent($magnet, $totalSize) {
         Start-Sleep -Seconds 2; $elapsed += 2
         if ($proc.HasExited -and !(Test-Path $readyFile)) {
             Write-Host ""
-            Warn "WebTorrent engine failed — couldn't find peers."
+            Warn "WebTorrent engine failed - couldn't find peers."
             Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
             Remove-Item -Force $readyFile -ErrorAction SilentlyContinue
             return $false
@@ -225,7 +225,7 @@ function Stream-WebTorrent($magnet, $totalSize) {
 
 function Stream-Peerflix($magnet) {
     if (-not (Get-Command peerflix -ErrorAction SilentlyContinue)) {
-        Warn "peerflix not installed — skipping."
+        Warn "peerflix not installed - skipping."
         return $false
     }
     Info "Peerflix: launching..."
@@ -239,7 +239,7 @@ function Stream-Peerflix($magnet) {
 
 function Stream-Aria2c($magnet, $totalSize) {
     if (-not (Get-Command aria2c -ErrorAction SilentlyContinue)) {
-        Warn "aria2c not installed — skipping."
+        Warn "aria2c not installed - skipping."
         return $false
     }
     $tempDir = "$env:TEMP\aria2stream_$(Get-Random)"
