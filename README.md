@@ -75,6 +75,17 @@ npm install -g peerflix
 # Auto-select the top result
 .\watch.ps1 "inception" -Auto
 
+# Stream now, keep the file afterwards
+.\watch.ps1 "inception" -Keep
+.\watch.ps1 "inception" -k
+
+# Download only (no streaming, with persistent resume)
+.\watch.ps1 "inception" -Download
+.\watch.ps1 "inception" -d
+
+# Save downloads to a custom folder
+.\watch.ps1 "inception" -Download -OutDir "D:\Movies"
+
 # Pick a specific engine
 .\watch.ps1 "tenet" -e peerflix
 .\watch.ps1 "tenet" -Engine aria2c
@@ -86,16 +97,29 @@ npm install -g peerflix
 ### Interactive prompt
 
 ```
-  Choose result [0-65] or engine: [p]eerflix [a]ria2c [q]uit
+  Choose result [0-86]  or: [p]eerflix [a]ria2c [d]ownload [q]uit
   (just press Enter for best result, auto-fallback on)
 
   Your choice: _
 ```
 
 - **`Enter`** or **number** → stream with WebTorrent (auto-fallback enabled)
-- **`p`** → Peerflix (no fallback — user's choice is respected)
+- **`p`** → Peerflix (no fallback — respects your choice)
 - **`a`** → aria2c (no fallback)
+- **`d`** → download mode (save to `~\Downloads\MaelStream\`)
 - **`q`** → quit
+
+### Flags
+
+| Flag | Short | Description |
+|------|-------|-------------|
+| `-Auto` | | Auto-select the best result (no interactive prompt) |
+| `-Download` | `-d` | Download only (no streaming). Saves to `-OutDir`. Persistent resume on Ctrl+C |
+| `-Keep` | `-k` | Stream now, save the completed file to `-OutDir` when mpv closes |
+| `-OutDir <path>` | `-o` | Output directory (default: `~\Downloads\MaelStream`) |
+| `-Engine <name>` | `-e` | Force a specific engine: `webtorrent`, `peerflix`, or `aria2c` |
+| `-NoFallback` | | Disable auto-fallback between engines |
+| `-Help` | | Show help |
 
 ### Auto-fallback
 
@@ -107,7 +131,7 @@ When no specific engine is chosen (default mode), the tool tries engines in orde
 
 Manual engine selection (`p`, `a`, or `-Engine`) disables fallback — respects your choice.
 
-Close `mpv` to stop the download and clean up temp files.
+Close `mpv` to stop streaming and clean up temp files. Use `-Keep` to save the file to `~\Downloads\MaelStream\` when done.
 
 ---
 
