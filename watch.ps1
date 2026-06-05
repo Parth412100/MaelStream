@@ -456,34 +456,62 @@ function Save-Aria2c($magnet, $totalSize, $outDir) {
 # ─── Launch with fallback chain ─────────────────────────────────────────
 
 if ($Download) {
-    Section "Downloading"
-    Write-Host "  Title:    $name" -ForegroundColor $C.Green
-    Write-Host "  Size:     $('{0:N2}' -f ($totalSize/1GB)) GB" -ForegroundColor $C.Cyan
-    Write-Host "  Seeders:  $seeds" -ForegroundColor $C.Cyan
-    Write-Host "  Save to:  $OutDir" -ForegroundColor $C.Magenta
-    Write-Host "  Press Ctrl+C to cancel`n" -ForegroundColor $C.Gray
+    try {
+        Section "Downloading"
+        Write-Host "  Title:    $name" -ForegroundColor $C.Green
+        Write-Host "  Size:     $('{0:N2}' -f ($totalSize/1GB)) GB" -ForegroundColor $C.Cyan
+        Write-Host "  Seeders:  $seeds" -ForegroundColor $C.Cyan
+        Write-Host "  Save to:  $OutDir" -ForegroundColor $C.Magenta
+        Write-Host "  Press Ctrl+C to cancel`n" -ForegroundColor $C.Gray
 
-    $engines = if ($userPickedEngine) { @($userPickedEngine) } else { @("webtorrent", "aria2c") }
-    $saved = $false
-    $attempted = @()
+        $engines = if ($userPickedEngine) { @($userPickedEngine) } else { @("webtorrent", "aria2c") }
+        $saved = $false
+        $attempted = @()
 
-    foreach ($engine in $engines) {
-        $attempted += $engine
-        Write-Host "  Trying engine: $engine" -ForegroundColor $C.Yellow
-        $result = switch ($engine) {
-            "webtorrent" { Save-WebTorrent $magnet $totalSize $OutDir }
-            "aria2c"     { Save-Aria2c $magnet $totalSize $OutDir }
+        foreach ($engine in $engines) {
+            $attempted += $engine
+            Write-Host "  Trying engine: $engine" -ForegroundColor $C.Yellow
+            $result = switch ($engine) {
+                "webtorrent" { Save-WebTorrent $magnet $totalSize $OutDir }
+                "aria2c"     { Save-Aria2c $magnet $totalSize $OutDir }
+            }
+            if ($result) { $saved = $result; break }
+            Write-Host "  [$engine] failed." -ForegroundColor $C.Red
+            if (-not $NoFallback -and $engine -ne $engines[-1]) {
+                Write-Host "  -> Falling back to next engine..." -ForegroundColor $C.Yellow
+            }
         }
-        if ($result) { $saved = $result; break }
-        Write-Host "  [$engine] failed." -ForegroundColor $C.Red
-        if (-not $NoFallback -and $engine -ne $engines[-1]) {
-            Write-Host "  -> Falling back to next engine..." -ForegroundColor $C.Yellow
+        if (-not $saved) { Write-Host ""; Err "All engines failed: $($attempted -join ', ')" }
+        Write-Host ""
+        Write-Host "  Download complete!" -ForegroundColor $C.Green
+        Write-Host "  Location: $saved" -ForegroundColor $C.Cyan
+    }
+    catch {
+        Write-Host "`n" -NoNewline
+        Write-Host "  Interrupted!" -ForegroundColor $C.Yellow
+        $partialDir = Join-Path $OutDir "_partials"
+        Get-ChildItem "$env:TEMP" -Directory -ErrorAction SilentlyContinue | Where-Object Name -match '^(wtsave|aria2save)_' | ForEach-Object {
+            $files = Get-ChildItem $_.FullName -File -ErrorAction SilentlyContinue | Where-Object Length -gt 1MB
+            if ($files.Count -gt 0) {
+                if (-not (Test-Path $partialDir)) { New-Item -ItemType Directory -Path $partialDir -Force | Out-Null }
+                foreach ($f in $files) {
+                    $dest = Join-Path $partialDir $f.Name
+                    if (Test-Path $dest) {
+                        $base = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
+                        $ext = [System.IO.Path]::GetExtension($f.Name)
+                        $dest = Join-Path $partialDir "$base`_partial$ext"
+                    }
+                    Move-Item -Path $f.FullName -Destination $dest -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+        if (Test-Path $partialDir) {
+            Write-Host "  Partial download saved to: $partialDir" -ForegroundColor $C.Green
         }
     }
-    if (-not $saved) { Write-Host ""; Err "All engines failed: $($attempted -join ', ')" }
-    Write-Host ""
-    Write-Host "  Download complete!" -ForegroundColor $C.Green
-    Write-Host "  Location: $saved" -ForegroundColor $C.Cyan
+    finally {
+        Get-ChildItem "$env:TEMP" -Directory -ErrorAction SilentlyContinue | Where-Object Name -match '^(wtsave|aria2save|wtstream|aria2stream)_' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    }
 } else {
     Section "Starting stream"
     Write-Host "  Title:    $name" -ForegroundColor $C.Green
