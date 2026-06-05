@@ -58,11 +58,6 @@ if ($Help -or $Query -eq '-?' -or $Query -eq '--help' -or $Query -eq '/?') {
 $ErrorActionPreference = "Stop"
 $ErrorView = "NormalView"
 
-# Cleanup stale temp dirs on any exit
-Register-EngineEvent -SourceIdentifier PowerShell.Exiting -SupportEvent -Action {
-    Get-ChildItem "$env:TEMP" -Directory -ErrorAction SilentlyContinue | Where-Object Name -match '^(wtsave|aria2save|wtstream|aria2stream)_' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-} | Out-Null
-
 $C = @{ Green = "Green"; Cyan = "Cyan"; Yellow = "Yellow"; Red = "Red"; Gray = "DarkGray"; Magenta = "Magenta" }
 
 function Section($msg) { Write-Host "`n==> $msg" -ForegroundColor $C.Cyan }
@@ -492,30 +487,31 @@ if ($Download) {
         Write-Host "  Download complete!" -ForegroundColor $C.Green
         Write-Host "  Location: $saved" -ForegroundColor $C.Cyan
     }
-    catch {
-        Write-Host "`n" -NoNewline
-        Write-Host "  Interrupted!" -ForegroundColor $C.Yellow
-        $partialDir = Join-Path $OutDir "_partials"
-        Get-ChildItem "$env:TEMP" -Directory -ErrorAction SilentlyContinue | Where-Object Name -match '^(wtsave|aria2save)_' | ForEach-Object {
-            $files = Get-ChildItem $_.FullName -File -ErrorAction SilentlyContinue | Where-Object Length -gt 1MB
-            if ($files.Count -gt 0) {
-                if (-not (Test-Path $partialDir)) { New-Item -ItemType Directory -Path $partialDir -Force | Out-Null }
-                foreach ($f in $files) {
-                    $dest = Join-Path $partialDir $f.Name
-                    if (Test-Path $dest) {
-                        $base = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
-                        $ext = [System.IO.Path]::GetExtension($f.Name)
-                        $dest = Join-Path $partialDir "$base`_partial$ext"
+    finally {
+        # Save partials if download was interrupted (always runs, even on Ctrl+C)
+        if (-not $saved) {
+            $partialDir = Join-Path $OutDir "_partials"
+            Get-ChildItem "$env:TEMP" -Directory -ErrorAction SilentlyContinue | Where-Object Name -match '^(wtsave|aria2save)_' | ForEach-Object {
+                $files = Get-ChildItem $_.FullName -File -ErrorAction SilentlyContinue | Where-Object Length -gt 1MB
+                if ($files.Count -gt 0) {
+                    if (-not (Test-Path $partialDir)) { New-Item -ItemType Directory -Path $partialDir -Force | Out-Null }
+                    foreach ($f in $files) {
+                        $dest = Join-Path $partialDir $f.Name
+                        if (Test-Path $dest) {
+                            $base = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
+                            $ext = [System.IO.Path]::GetExtension($f.Name)
+                            $dest = Join-Path $partialDir "$base`_partial$ext"
+                        }
+                        Move-Item -Path $f.FullName -Destination $dest -Force -ErrorAction SilentlyContinue
                     }
-                    Move-Item -Path $f.FullName -Destination $dest -Force -ErrorAction SilentlyContinue
                 }
             }
+            if (Test-Path $partialDir) {
+                Write-Host "`n  Interrupted!" -ForegroundColor $C.Yellow
+                Write-Host "  Partial download saved to: $partialDir" -ForegroundColor $C.Green
+            }
         }
-        if (Test-Path $partialDir) {
-            Write-Host "  Partial download saved to: $partialDir" -ForegroundColor $C.Green
-        }
-    }
-    finally {
+        # Always clean up temp dirs
         Get-ChildItem "$env:TEMP" -Directory -ErrorAction SilentlyContinue | Where-Object Name -match '^(wtsave|aria2save|wtstream|aria2stream)_' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     }
 } else {
