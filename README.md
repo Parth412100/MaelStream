@@ -13,14 +13,14 @@ Three engines: WebTorrent (default), Peerflix, aria2c.
 git clone https://github.com/Parth412100/MaelStream.git
 cd MaelStream
 
-# 2. Auto-setup (installs everything)
+# 2. One-command auto-installer
 .\setup.ps1
 
 # 3. Stream!
 .\watch.ps1 "mortal kombat 2021"
 ```
 
-That's it. The setup script checks for Node.js, mpv, WebTorrent library, peerflix, and aria2c — installing any that are missing.
+`setup.ps1` checks for Node.js, mpv, WebTorrent library, peerflix, and aria2c — installing any that are missing automatically via `winget` and `npm`. If a dependency can't be auto-installed, it tells you exactly what to do.
 
 ---
 
@@ -33,6 +33,9 @@ That's it. The setup script checks for Node.js, mpv, WebTorrent library, peerfli
   - *aria2c* — fast C++ engine + Node.js HTTP range server
 - **HTTP Range-request server** — every engine serves partial content so `mpv` can seek freely
 - **Auto-mode** — skip the prompt, stream the best result immediately
+- **Auto-fallback** — if WebTorrent can't find peers after 30s, it automatically tries Peerflix, then aria2c. No manual retry needed.
+- **Pre-flight check** — verifies all dependencies before searching, tells you exactly what's missing
+- **Live progress** — shows `% | MB/s | ETA | peers` during download
 - **Full cleanup** — kills all processes and deletes temp files on exit
 
 ---
@@ -44,49 +47,65 @@ That's it. The setup script checks for Node.js, mpv, WebTorrent library, peerfli
 | **Node.js** (v18+) | `winget install OpenJS.NodeJS.LTS` | Required for all engines |
 | **mpv** | `winget install mpv` | Video player, also available via Windows Store |
 | **Git** | `winget install Git.Git` | Only needed for cloning the repo |
-| **aria2c** (optional) | `winget install aria2.aria2` | Fallback engine #2 |
+| **aria2c** (optional) | `winget install aria2.aria2` | Fallback engine #3 |
 
 ---
 
 ## Installation
 
 ```powershell
-# 1. Clone the repository
-git clone https://github.com/Parth412100/MaelStream.git
-cd MaelStream
+# Option A: Auto-install (recommended)
+.\setup.ps1
 
-# 2. Install local Node.js dependencies
+# Option B: Manual
 npm install
-
-# 3. Install global tools
 npm install -g peerflix
 ```
 
-To verify everything is in your PATH:
-
-```powershell
-Get-Command node, mpv, peerflix, aria2c -ErrorAction SilentlyContinue
-```
-
-All four should resolve. Missing one? Run the corresponding `winget install` command from the table above.
+`setup.ps1` is a one-command installer. It runs `winget` for system deps (Node.js, mpv, aria2c) and `npm` for library deps (webtorrent, peerflix). If `winget` isn't available, it tells you exactly which commands to run.
 
 ---
 
 ## Usage
 
 ```powershell
-# Search and stream a movie
+# Search and stream (interactive prompt)
 .\watch.ps1 "mortal kombat 2021"
 
 # Auto-select the top result
 .\watch.ps1 "inception" -Auto
+
+# Pick a specific engine
+.\watch.ps1 "tenet" -e peerflix
+.\watch.ps1 "tenet" -Engine aria2c
+
+# Show help
+.\watch.ps1 -Help
 ```
 
-At the prompt:
-- **`Enter`** or **number** → stream with WebTorrent (default engine)
-- **`p`** → stream with Peerflix
-- **`a`** → stream with aria2c
+### Interactive prompt
+
+```
+  Choose result [0-65] or engine: [p]eerflix [a]ria2c [q]uit
+  (just press Enter for best result, auto-fallback on)
+
+  Your choice: _
+```
+
+- **`Enter`** or **number** → stream with WebTorrent (auto-fallback enabled)
+- **`p`** → Peerflix (no fallback — user's choice is respected)
+- **`a`** → aria2c (no fallback)
 - **`q`** → quit
+
+### Auto-fallback
+
+When no specific engine is chosen (default mode), the tool tries engines in order:
+
+1. **WebTorrent** — waits up to 30s for peers. If it fails, →
+2. **Peerflix** — launches and streams. If it fails, →
+3. **aria2c** — last resort. If it fails, → error message with suggestions
+
+Manual engine selection (`p`, `a`, or `-Engine`) disables fallback — respects your choice.
 
 Close `mpv` to stop the download and clean up temp files.
 
@@ -177,6 +196,16 @@ Close `mpv` to stop the download and clean up temp files.
 
 ---
 
+### 9. `All engines failed: webtorrent, peerflix, aria2c`
+**Symptoms:** Every engine tried and failed. WebTorrent couldn't find peers, Peerflix exited immediately, aria2c timed out.
+**Root cause:** ISP is blocking all forms of P2P traffic (UDP, TCP, WebRTC). The connection to the swarm is completely severed.
+**Fix:** Try a different torrent with more seeders (500+). If all torrents fail, your ISP is actively blocking P2P. Solutions:
+  - Use a VPN with a P2P-optimized server (paid ProtonVPN, Mullvad, etc.)
+  - Use a debrid service like Real-Debrid (~$4/month) which caches torrents on fast servers and serves them via HTTPS
+  - Try from a different network (mobile hotspot, friend's connection)
+
+---
+
 ### 8. ProtonVPN P2P speeds at ~20 KB/s
 **Symptoms:** ProtonVPN WireGuard tunnel was up, but torrent download speeds were unusably slow (0-1 peers found).
 **Root cause:** ProtonVPN's free/datacenter IPs are blocked or throttled by trackers and peer swarms. P2P-optimized servers require a paid plan.
@@ -187,8 +216,9 @@ Close `mpv` to stop the download and clean up temp files.
 ## File Reference
 
 | File | Purpose |
-|---|---|
-| `watch.ps1` | Main entry point — search + select + stream |
+|---|---|---|
+| `watch.ps1` | Main entry point — search + select + stream with fallback chain |
+| `setup.ps1` | One-command installer — checks/installs all dependencies |
 | `stream-webtorrent.js` | WebTorrent engine — metadata exchange + HTTP server |
 | `stream-server.js` | aria2c engine — serves partial files with Range support |
 | `package.json` | npm metadata (pins `webtorrent@1.9.4`) |
