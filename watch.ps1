@@ -106,6 +106,16 @@ if (-not $allGood) {
     exit 1
 }
 
+# Clean up orphaned processes from previous runs
+$orphans = Get-Process -Name "node" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match "stream-webtorrent|stream-server" }
+if ($orphans) { $orphans | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 1 }
+# Free port 8889 if in use
+$portCheck = netstat -ano | Select-String ":8889\s"
+if ($portCheck) {
+    $foundPid = ($portCheck.Line -replace '.*\s+(\d+)$', '$1') -as [int]
+    if ($foundPid -and $foundPid -ne $PID) { Stop-Process -Id $foundPid -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 1 }
+}
+
 $trackers = @(
     "udp://tracker.opentrackr.org:1337/announce"
     "udp://tracker.openbittorrent.com:80"
