@@ -102,8 +102,8 @@ if ($missing -contains "nodejs" -and $winget) {
 }
 
 if ($missing -contains "mpv" -and $winget) {
-    Info "Installing mpv..."
-    winget install mpv --accept-package-agreements 2>&1 | Out-Null
+    Info "Installing mpv (official CI build)..."
+    winget install "mpv-player.mpv-CI.MSVC" --accept-package-agreements 2>&1 | Out-Null
     if (Get-Command mpv -ErrorAction SilentlyContinue) {
         Ok "mpv installed"
     } else {
