@@ -375,11 +375,10 @@ function Save-WebTorrent($magnet, $totalSize, $outDir) {
         $destPath = Join-Path $outDir "$base`_$((Get-Date -Format 'yyyyMMdd_HHmmss'))$ext"
     }
     Move-Item -Path $largest.FullName -Destination $destPath -Force
-    Ok "Saved: $destPath"
 
     if (-not $proc.HasExited) { $proc.Kill() }
     Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
-    return $true
+    return $destPath
 }
 
 function Save-Aria2c($magnet, $totalSize, $outDir) {
@@ -435,11 +434,10 @@ function Save-Aria2c($magnet, $totalSize, $outDir) {
         $destPath = Join-Path $outDir "$base`_$((Get-Date -Format 'yyyyMMdd_HHmmss'))$ext"
     }
     Move-Item -Path $file -Destination $destPath -Force
-    Ok "Saved: $destPath"
 
     if (-not $ariaProc.HasExited) { $ariaProc.Kill() }
     Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
-    return $true
+    return $destPath
 }
 
 # ─── Launch with fallback chain ─────────────────────────────────────────
@@ -463,13 +461,16 @@ if ($Download) {
             "webtorrent" { Save-WebTorrent $magnet $totalSize $OutDir }
             "aria2c"     { Save-Aria2c $magnet $totalSize $OutDir }
         }
-        if ($result) { $saved = $true; break }
+        if ($result) { $saved = $result; break }
         Write-Host "  [$engine] failed." -ForegroundColor $C.Red
         if (-not $NoFallback -and $engine -ne $engines[-1]) {
             Write-Host "  -> Falling back to next engine..." -ForegroundColor $C.Yellow
         }
     }
     if (-not $saved) { Write-Host ""; Err "All engines failed: $($attempted -join ', ')" }
+    Write-Host ""
+    Write-Host "  Download complete!" -ForegroundColor $C.Green
+    Write-Host "  Location: $saved" -ForegroundColor $C.Cyan
 } else {
     Section "Starting stream"
     Write-Host "  Title:    $name" -ForegroundColor $C.Green
