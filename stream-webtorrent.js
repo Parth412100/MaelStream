@@ -98,7 +98,9 @@ let torrent = null;
 
 client.add(magnet, { path: tempDir }, (t) => {
     torrent = t;
-    const file = torrent.files[0];
+    const videoExts = ['.mkv', '.mp4', '.avi', '.webm', '.mov', '.m4v', '.flv', '.wmv'];
+    const sorted = torrent.files.sort((a, b) => b.length - a.length);
+    const file = sorted.find(f => videoExts.some(ext => f.name.toLowerCase().endsWith(ext))) || sorted[0];
     if (!file) {
         console.error('\n  [WebTorrent] No files found in torrent.');
         process.exit(1);
