@@ -265,10 +265,14 @@ function Stream-WebTorrent($magnet, $totalSize, $keep, $outDir, $name) {
 
     Write-Host "`n  Cleaning up..." -ForegroundColor $C.Yellow
     if ($keep) {
-        $videoExts = @("*.mkv", "*.mp4", "*.avi", "*.webm", "*.mov", "*.m4v")
+        $videoExts = @(".mkv", ".mp4", ".avi", ".webm", ".mov", ".m4v")
         $file = Get-ChildItem -Path $tempDir -File -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $videoExts -contains "*$($_.Extension)" } |
+            Where-Object { $_.Extension -in $videoExts } |
             Sort-Object Length -Descending | Select-Object -First 1
+        if (-not $file) {
+            $file = Get-ChildItem -Path $tempDir -File -Recurse -ErrorAction SilentlyContinue |
+                Sort-Object Length -Descending | Select-Object -First 1
+        }
         if ($file) {
             $safeName = Sanitize-FileName $name
             $dest = Join-Path $outDir "$safeName$($file.Extension)"
@@ -281,6 +285,8 @@ function Stream-WebTorrent($magnet, $totalSize, $keep, $outDir, $name) {
             Move-Item -Path $file.FullName -Destination $dest -Force -ErrorAction SilentlyContinue
             if (Test-Path $dest) {
                 Write-Host "  Saved to: $dest" -ForegroundColor $C.Green
+            } else {
+                Warn "Failed to save file."
             }
         } else {
             Warn "Could not find video file to keep."
@@ -350,9 +356,9 @@ function Stream-Aria2c($magnet, $totalSize, $keep, $outDir, $name) {
 
     Write-Host "`n  Cleaning up..." -ForegroundColor $C.Yellow
     if ($keep) {
-        $videoExts = @("*.mkv", "*.mp4", "*.avi", "*.webm", "*.mov", "*.m4v")
+        $videoExts = @(".mkv", ".mp4", ".avi", ".webm", ".mov", ".m4v")
         $savedFile = Get-ChildItem -Path $tempDir -File -Recurse -ErrorAction SilentlyContinue |
-            Where-Object { $videoExts -contains "*$($_.Extension)" -and $_.Length -gt 1MB } |
+            Where-Object { $_.Extension -in $videoExts -and $_.Length -gt 1MB } |
             Sort-Object Length -Descending | Select-Object -First 1
         if (-not $savedFile) {
             $savedFile = Get-ChildItem -Path $tempDir -File -ErrorAction SilentlyContinue |
@@ -371,6 +377,8 @@ function Stream-Aria2c($magnet, $totalSize, $keep, $outDir, $name) {
             Move-Item -Path $savedFile.FullName -Destination $dest -Force -ErrorAction SilentlyContinue
             if (Test-Path $dest) {
                 Write-Host "  Saved to: $dest" -ForegroundColor $C.Green
+            } else {
+                Warn "Failed to save file."
             }
         } else {
             Warn "Could not find file to keep."
