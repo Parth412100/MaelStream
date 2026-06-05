@@ -45,7 +45,7 @@ cd MaelStream
 | Dependency | Install | Notes |
 |---|---|---|
 | **Node.js** (v18+) | `winget install OpenJS.NodeJS.LTS` | Required for all engines |
-| **mpv** | `winget install mpv` | Video player, also available via Windows Store |
+| **mpv** | `winget install "mpv-player.mpv-CI.MSVC"` | Video player, official CI build |
 | **Git** | `winget install Git.Git` | Only needed for cloning the repo |
 | **aria2c** (optional) | `winget install aria2.aria2` | Fallback engine #3 |
 
@@ -139,7 +139,7 @@ Close `mpv` to stop the download and clean up temp files.
 
 **WebTorrent engine** uses the [webtorrent](https://github.com/webtorrent/webtorrent) npm library (v1.9.4). It creates an HTTP server with full `Range` header support so `mpv` can seek through partially-downloaded files. Peer discovery uses DHT, trackers, and WebRTC.
 
-**Peerflix** runs `peerflix —mpv -c 200 —remove`, piping the magnet through its own HTTP server. Simple and reliable, but uses the older `torrent-stream` backend.
+**Peerflix** runs `peerflix --mpv -c 200 --remove`, piping the magnet through its own HTTP server. Simple and reliable, but uses the older `torrent-stream` backend.
 
 **aria2c engine** launches the C++ aria2c binary to download pieces, then a lightweight Node.js server (`stream-server.js`) serves the partial file with byte-range support. Designed as a fallback for cases where Node.js-based clients struggle.
 

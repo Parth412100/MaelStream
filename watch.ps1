@@ -99,16 +99,14 @@ if (-not $allGood) {
 $trackers = @(
     "udp://tracker.opentrackr.org:1337/announce"
     "udp://tracker.openbittorrent.com:80"
-    "udp://tracker.publicbt.com:80"
-    "udp://tracker.coppersurfer.tk:6969"
-    "udp://tracker.leechers-paradise.org:6969"
-    "udp://tracker.tiny-vps.com:6969"
     "udp://tracker.torrent.eu.org:451"
     "udp://open.demonii.com:1337"
     "udp://exodus.desync.com:6969"
     "udp://tracker.moeking.me:6969"
     "udp://tracker.dler.org:6969"
     "https://tracker.tamersunion.org:443/announce"
+    "udp://tracker.altrosky.nl:6969/announce"
+    "udp://tracker.qu.ax:6969/announce"
     "wss://tracker.btorrent.xyz"
     "wss://tracker.openwebtorrent.com"
 )
@@ -127,7 +125,9 @@ Write-Host ""
 
 $encodedQuery = [System.Net.WebUtility]::UrlEncode($Query)
 $apiUrl = "https://apibay.org/q.php?q=$encodedQuery&cat=0"
-$results = curl.exe -s --max-time 15 $apiUrl 2>&1 | ConvertFrom-Json
+$json = ""
+try { $json = curl.exe -s --max-time 15 $apiUrl 2>&1 } catch { Err "Failed to reach TPB API. Check your connection." }
+$results = $json | ConvertFrom-Json
 
 if (-not $results -or -not $results[0].id) {
     Err "No results found for '$Query'. Try different keywords."
@@ -201,6 +201,7 @@ function Stream-WebTorrent($magnet, $totalSize) {
         if ($proc.HasExited -and !(Test-Path $readyFile)) {
             Write-Host ""
             Warn "WebTorrent engine failed - couldn't find peers."
+            if (-not $proc.HasExited) { $proc.Kill() }
             Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
             Remove-Item -Force $readyFile -ErrorAction SilentlyContinue
             return $false
@@ -208,6 +209,7 @@ function Stream-WebTorrent($magnet, $totalSize) {
     }
     if (!(Test-Path $readyFile)) {
         Warn "WebTorrent timed out after 30s (no peers yet, but still trying...)"
+        if (-not $proc.HasExited) { $proc.Kill() }
         Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
         Remove-Item -Force $readyFile -ErrorAction SilentlyContinue
         return $false
@@ -268,8 +270,14 @@ function Stream-Aria2c($magnet, $totalSize) {
     if (!$file) { Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue; return $false }
 
     $port = 8888
-    $serverProc = Start-Process -FilePath "node" -ArgumentList @("$scriptDir\stream-server.js", "$tempDir", "$totalSize", "$port") -NoNewWindow -PassThru
-    Start-Sleep -Seconds 2
+    $svReadyFile = "$env:TEMP\aria2_ready_$(Get-Random).tmp"
+    $serverProc = Start-Process -FilePath "node" -ArgumentList @("$scriptDir\stream-server.js", "$tempDir", "$totalSize", "$port", "$svReadyFile") -NoNewWindow -PassThru
+    $svTimeout = 10; $svElapsed = 0
+    while (!(Test-Path $svReadyFile) -and $svElapsed -lt $svTimeout) {
+        Start-Sleep -Milliseconds 500; $svElapsed += 0.5
+        if ($serverProc.HasExited) { break }
+    }
+    Remove-Item -Force $svReadyFile -ErrorAction SilentlyContinue
 
     Write-Host "  Launching mpv... (close mpv to stop)" -ForegroundColor $C.Green
     mpv --cache=yes --cache-secs=120 --demuxer-readahead-secs=60 "http://127.0.0.1:$port/"
@@ -297,7 +305,7 @@ Write-Host "  Press Ctrl+C to stop at any time`n" -ForegroundColor $C.Gray
 $engines = @()
 
 if ($userPickedEngine) {
-    $NoFallback = $true
+    if (-not $PSBoundParameters.ContainsKey('NoFallback')) { $NoFallback = $true }
     switch ($userPickedEngine) {
         "webtorrent" { $engines = @("webtorrent") }
         "peerflix"   { $engines = @("peerflix") }

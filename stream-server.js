@@ -5,6 +5,7 @@ const path = require('path');
 const dir = process.argv[2];
 const totalSize = parseInt(process.argv[3], 10);
 const port = parseInt(process.argv[4], 10);
+const readyFile = process.argv[5];
 
 let currentSize = 0;
 
@@ -86,6 +87,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(port, () => {
+    if (readyFile) { try { fs.writeFileSync(readyFile, 'ready'); } catch {} }
     process.stdout.write(`Stream server on port ${port}`);
 });
 

@@ -94,6 +94,11 @@ function createFileServer(file, port) {
     });
 }
 
+client.on('error', (err) => {
+    console.error('\n  [WebTorrent] Error:', err.message);
+    process.exit(1);
+});
+
 let torrent = null;
 
 client.add(magnet, { path: tempDir }, (t) => {
