@@ -13,10 +13,10 @@ function Err($msg) { Write-Host "  [X] $msg" -ForegroundColor $C.Red }
 
 Write-Host @"
 
-╔══════════════════════════════════════╗
-║        MaelStream — Setup           ║
-║  CLI torrent streaming pipeline     ║
-╚══════════════════════════════════════╝
+ +======================================+
+ |        MaelStream - Setup            |
+ |  CLI torrent streaming pipeline      |
+ +======================================+
 
 "@ -ForegroundColor $C.Cyan
 
@@ -29,7 +29,7 @@ $found = @{}
 $node = Get-Command node -ErrorAction SilentlyContinue
 if ($node) {
     $ver = node --version
-    Ok "Node.js $ver — $($node.Source)"
+    Ok "Node.js $ver - $($node.Source)"
     $found.Node = $true
 } else {
     Warn "Node.js not found"
@@ -39,7 +39,7 @@ if ($node) {
 # --- mpv ---
 $mpv = Get-Command mpv -ErrorAction SilentlyContinue
 if ($mpv) {
-    Ok "mpv — $($mpv.Source)"
+    Ok "mpv - $($mpv.Source)"
     $found.mpv = $true
 } else {
     Warn "mpv not found"
@@ -49,19 +49,19 @@ if ($mpv) {
 # --- aria2c (optional) ---
 $aria2 = Get-Command aria2c -ErrorAction SilentlyContinue
 if ($aria2) {
-    Ok "aria2c — $($aria2.Source)"
+    Ok "aria2c - $($aria2.Source)"
     $found.aria2 = $true
 } else {
-    Warn "aria2c not found (optional — only needed for 'a' engine)"
+    Warn "aria2c not found (optional - only needed for 'a' engine)"
 }
 
 # --- peerflix (optional) ---
 $peerflix = Get-Command peerflix -ErrorAction SilentlyContinue
 if ($peerflix) {
-    Ok "peerflix — $($peerflix.Source)"
+    Ok "peerflix - $($peerflix.Source)"
     $found.peerflix = $true
 } else {
-    Warn "peerflix not found (optional — only needed for 'p' engine)"
+    Warn "peerflix not found (optional - only needed for 'p' engine)"
 }
 
 # --- webtorrent library ---
