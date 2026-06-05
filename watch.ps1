@@ -203,6 +203,14 @@ function Sanitize-FileName($name) {
     return -join $valid
 }
 
+function Get-ShortHash($str) {
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($str)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $hash = $sha.ComputeHash($bytes)
+    $sha.Dispose()
+    return -join ($hash[0..3] | ForEach-Object { '{0:x2}' -f $_ })
+}
+
 # ─── Engine functions ────────────────────────────────────────────────────
 
 function Stream-WebTorrent($magnet, $totalSize) {
@@ -212,8 +220,9 @@ function Stream-WebTorrent($magnet, $totalSize) {
     $readyFile = "$env:TEMP\wt_ready_$(Get-Random).tmp"
 
     Info "WebTorrent: finding peers and starting HTTP server..."
+    $env:WT_TEMP_DIR = $tempDir
     $proc = Start-Process -FilePath "node" -NoNewWindow -PassThru -ArgumentList @(
-        "$scriptDir\stream-webtorrent.js", "$magnet", "$port", "$tempDir", "$readyFile"
+        "$scriptDir\stream-webtorrent.js", "$magnet", "$port", "--use-env", "$readyFile"
     )
 
     $timeout = 30; $elapsed = 0
@@ -270,7 +279,7 @@ function Stream-Aria2c($magnet, $totalSize) {
     Info "aria2c: starting download..."
 
     $ariaArgs = @(
-        "--max-connection-per-server=16", "--split=16", "--min-split-size=1M"
+        "--max-connection-per-server=8", "--split=8", "--min-split-size=1M"
         "--bt-max-peers=200", "--seed-time=0", "--enable-dht=true"
         "--dht-listen-port=6881", "--listen-port=6881", "--max-overall-upload-limit=1K"
         "--file-allocation=none", "--allow-overwrite=true", "--summary-interval=5"
@@ -312,20 +321,26 @@ function Stream-Aria2c($magnet, $totalSize) {
 
 # ─── Save (download) functions ───────────────────────────────────────────
 
-function Save-WebTorrent($magnet, $totalSize, $outDir) {
-    $tempDir = "$env:TEMP\wtsave_$(Get-Random)"
-    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+function Save-WebTorrent($magnet, $totalSize, $outDir, $name) {
+    $partialsRoot = Join-Path $outDir "_partials"
+    $dirName = "$(Sanitize-FileName $name)_$(Get-ShortHash $magnet)"
+    $tempDir = Join-Path $partialsRoot $dirName
+    $resuming = Test-Path $tempDir
+    if (-not $resuming) { New-Item -ItemType Directory -Path $tempDir -Force | Out-Null }
+
     $port = 8889
     $readyFile = "$env:TEMP\wt_ready_$(Get-Random).tmp"
     $doneFile = "$env:TEMP\wt_done_$(Get-Random).tmp"
 
+    if ($resuming) { Info "Resuming existing download..." }
     Info "WebTorrent: downloading..."
+    $env:WT_TEMP_DIR = $tempDir
     $proc = Start-Process -FilePath "node" -NoNewWindow -PassThru -ArgumentList @(
-        "$scriptDir\stream-webtorrent.js", "$magnet", "$port", "$tempDir", "$readyFile", "$doneFile"
+        "$scriptDir\stream-webtorrent.js", "$magnet", "$port", "--use-env", "$readyFile", "$doneFile", "--no-sigint"
     )
 
     $timeout = 120; $elapsed = 0; $lastStatus = 0
-    while (!(Test-Path $readyFile) -and $elapsed -lt $timeout) {
+    while (!(Test-Path $readyFile) -and $elapsed -lt $timeout -and -not $script:cancelled) {
         Start-Sleep -Seconds 2; $elapsed += 2
         if ($elapsed - $lastStatus -ge 10) {
             $lastStatus = $elapsed
@@ -335,22 +350,25 @@ function Save-WebTorrent($magnet, $totalSize, $outDir) {
             Write-Host ""
             Warn "WebTorrent failed to start."
             if (-not $proc.HasExited) { $proc.Kill() }
-            Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
             Remove-Item -Force $readyFile, $doneFile -ErrorAction SilentlyContinue
             return $false
         }
     }
+    if ($script:cancelled) {
+        Remove-Item -Force $readyFile, $doneFile -ErrorAction SilentlyContinue
+        if (-not $proc.HasExited) { $proc.Kill() }
+        return $false
+    }
     if (!(Test-Path $readyFile)) {
         Warn "WebTorrent timed out starting download."
         if (-not $proc.HasExited) { $proc.Kill() }
-        Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
         Remove-Item -Force $readyFile, $doneFile -ErrorAction SilentlyContinue
         return $false
     }
     Remove-Item -Force $readyFile -ErrorAction SilentlyContinue
 
     $lastProgress = 0
-    while (!(Test-Path $doneFile)) {
+    while (!(Test-Path $doneFile) -and -not $script:cancelled) {
         Start-Sleep -Seconds 2
         $files = Get-ChildItem -Path $tempDir -File -ErrorAction SilentlyContinue | Where-Object Length -gt 1MB
         if ($files.Count -gt 0) {
@@ -364,10 +382,14 @@ function Save-WebTorrent($magnet, $totalSize, $outDir) {
         }
         if ($proc.HasExited -and !(Test-Path $doneFile)) {
             Warn "WebTorrent process exited before download completed."
-            Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
             Remove-Item -Force $doneFile -ErrorAction SilentlyContinue
             return $false
         }
+    }
+    if ($script:cancelled) {
+        Remove-Item -Force $doneFile -ErrorAction SilentlyContinue
+        if (-not $proc.HasExited) { $proc.Kill() }
+        return $false
     }
     Remove-Item -Force $doneFile -ErrorAction SilentlyContinue
 
@@ -395,17 +417,18 @@ function Save-WebTorrent($magnet, $totalSize, $outDir) {
     return $destPath
 }
 
-function Save-Aria2c($magnet, $totalSize, $outDir) {
+function Save-Aria2c($magnet, $totalSize, $outDir, $name) {
     if (-not (Get-Command aria2c -ErrorAction SilentlyContinue)) {
         Warn "aria2c not installed - skipping."
         return $false
     }
+    # aria2c doesn't support env vars for --dir, so use $env:TEMP to avoid path-with-spaces issues
     $tempDir = "$env:TEMP\aria2save_$(Get-Random)"
     New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
     Info "aria2c: downloading..."
 
     $ariaArgs = @(
-        "--max-connection-per-server=16", "--split=16", "--min-split-size=1M"
+        "--max-connection-per-server=8", "--split=8", "--min-split-size=1M"
         "--bt-max-peers=200", "--seed-time=0", "--enable-dht=true"
         "--dht-listen-port=6881", "--listen-port=6881", "--max-overall-upload-limit=1K"
         "--file-allocation=none", "--allow-overwrite=true", "--summary-interval=5"
@@ -414,24 +437,25 @@ function Save-Aria2c($magnet, $totalSize, $outDir) {
     $ariaProc = Start-Process -FilePath "aria2c" -ArgumentList $ariaArgs -NoNewWindow -PassThru
 
     $file = $null; $timeout = 86400; $elapsed = 0
-    while (!$file -and $elapsed -lt $timeout) {
+    while (!$file -and $elapsed -lt $timeout -and -not $script:cancelled) {
         Start-Sleep -Seconds 5; $elapsed += 5
         if ($ariaProc.HasExited) {
-            # aria2c exited - check if we have files
             $files = Get-ChildItem -Path $tempDir -File -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch '\.aria2$' -and $_.Length -gt 1MB }
             if ($files.Count -gt 0) { $file = $files[0].FullName; break }
-            Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
             return $false
         }
         $files = Get-ChildItem -Path $tempDir -File -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch '\.aria2$' -and $_.Length -gt 1MB }
         if ($files.Count -gt 0) {
-            # Check if download is complete (aria2c process ended, or file stopped growing)
             $currentSize = ($files | Measure-Object -Property Length -Sum).Sum
             if ($currentSize -ge $totalSize -or $ariaProc.HasExited) {
                 $file = ($files | Sort-Object Length -Descending | Select-Object -First 1).FullName
                 break
             }
         }
+    }
+    if ($script:cancelled) {
+        if (-not $ariaProc.HasExited) { $ariaProc.Kill() }
+        return $false
     }
     if (-not $file) {
         if (-not $ariaProc.HasExited) { $ariaProc.Kill() }
@@ -457,6 +481,14 @@ function Save-Aria2c($magnet, $totalSize, $outDir) {
 # ─── Launch with fallback chain ─────────────────────────────────────────
 
 if ($Download) {
+    $script:cancelled = $false
+    $cancelHandler = {
+        param($sender, $e)
+        $e.Cancel = $true
+        $script:cancelled = $true
+        Write-Host "`n  Cancelling download..." -ForegroundColor Yellow
+    }
+    [Console]::add_CancelKeyPress($cancelHandler)
     try {
         Section "Downloading"
         Write-Host "  Title:    $name" -ForegroundColor $C.Green
@@ -468,13 +500,15 @@ if ($Download) {
         $engines = if ($userPickedEngine) { @($userPickedEngine) } else { @("webtorrent", "aria2c") }
         $saved = $false
         $attempted = @()
+        $engineStarted = $false
 
         foreach ($engine in $engines) {
             $attempted += $engine
             Write-Host "  Trying engine: $engine" -ForegroundColor $C.Yellow
+            $engineStarted = $true
             $result = switch ($engine) {
-                "webtorrent" { Save-WebTorrent $magnet $totalSize $OutDir }
-                "aria2c"     { Save-Aria2c $magnet $totalSize $OutDir }
+                "webtorrent" { Save-WebTorrent $magnet $totalSize $OutDir $name }
+                "aria2c"     { Save-Aria2c $magnet $totalSize $OutDir $name }
             }
             if ($result) { $saved = $result; break }
             Write-Host "  [$engine] failed." -ForegroundColor $C.Red
@@ -488,31 +522,21 @@ if ($Download) {
         Write-Host "  Location: $saved" -ForegroundColor $C.Cyan
     }
     finally {
-        # Save partials if download was interrupted (always runs, even on Ctrl+C)
-        if (-not $saved) {
+        if (-not $saved -and $engineStarted) {
             $partialDir = Join-Path $OutDir "_partials"
-            Get-ChildItem "$env:TEMP" -Directory -ErrorAction SilentlyContinue | Where-Object Name -match '^(wtsave|aria2save)_' | ForEach-Object {
-                $files = Get-ChildItem $_.FullName -File -ErrorAction SilentlyContinue | Where-Object Length -gt 1MB
-                if ($files.Count -gt 0) {
-                    if (-not (Test-Path $partialDir)) { New-Item -ItemType Directory -Path $partialDir -Force | Out-Null }
-                    foreach ($f in $files) {
-                        $dest = Join-Path $partialDir $f.Name
-                        if (Test-Path $dest) {
-                            $base = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
-                            $ext = [System.IO.Path]::GetExtension($f.Name)
-                            $dest = Join-Path $partialDir "$base`_partial$ext"
-                        }
-                        Move-Item -Path $f.FullName -Destination $dest -Force -ErrorAction SilentlyContinue
-                    }
-                }
+            $hasPartials = Get-ChildItem $partialDir -Directory -ErrorAction SilentlyContinue | Where-Object {
+                (Get-ChildItem $_.FullName -File -Recurse -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum -gt 1MB
             }
-            if (Test-Path $partialDir) {
+            if ($hasPartials) {
                 Write-Host "`n  Interrupted!" -ForegroundColor $C.Yellow
-                Write-Host "  Partial download saved to: $partialDir" -ForegroundColor $C.Green
+                Write-Host "  Partial saved to: $partialDir" -ForegroundColor $C.Green
+                Write-Host "  Re-run the same search to resume." -ForegroundColor $C.Cyan
             }
         }
-        # Always clean up temp dirs
-        Get-ChildItem "$env:TEMP" -Directory -ErrorAction SilentlyContinue | Where-Object Name -match '^(wtsave|aria2save|wtstream|aria2stream)_' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        # Clean up aria2c fallback temp dirs (WebTorrent uses persistent _partials dirs)
+        Get-ChildItem "$env:TEMP" -Directory -ErrorAction SilentlyContinue | Where-Object Name -match '^(aria2save|wtstream|aria2stream)_' | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        # Remove Ctrl+C handler to avoid leaking
+        if ($cancelHandler) { [Console]::remove_CancelKeyPress($cancelHandler) }
     }
 } else {
     Section "Starting stream"

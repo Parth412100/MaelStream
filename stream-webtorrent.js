@@ -4,9 +4,11 @@ const fs = require('fs');
 
 const magnet = process.argv[2];
 const port = parseInt(process.argv[3], 10) || 8888;
-const tempDir = process.argv[4] || process.env.TEMP;
+const useEnv = process.argv[4] === '--use-env';
+const tempDir = useEnv ? process.env.WT_TEMP_DIR : (process.argv[4] || process.env.TEMP);
 const readyFile = process.argv[5];
 const doneFile = process.argv[6];
+const noSigint = process.argv[7] === '--no-sigint';
 
 const client = new WebTorrent({ dht: true, tracker: true, utp: false });
 let serverStarted = false;
@@ -130,5 +132,7 @@ setTimeout(() => {
     }
 }, 180000);
 
-process.on('SIGTERM', () => { if (client) client.destroy(() => process.exit(0)); });
-process.on('SIGINT', () => { if (client) client.destroy(() => process.exit(0)); });
+if (!noSigint) {
+    process.on('SIGTERM', () => { if (client) client.destroy(() => process.exit(0)); });
+    process.on('SIGINT', () => { if (client) client.destroy(() => process.exit(0)); });
+}

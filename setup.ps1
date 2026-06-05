@@ -46,13 +46,14 @@ if ($mpv) {
     $missing += "mpv"
 }
 
-# --- aria2c (optional) ---
+# --- aria2c ---
 $aria2 = Get-Command aria2c -ErrorAction SilentlyContinue
 if ($aria2) {
     Ok "aria2c - $($aria2.Source)"
     $found.aria2 = $true
 } else {
-    Warn "aria2c not found (optional - only needed for 'a' engine)"
+    Warn "aria2c not found"
+    $missing += "aria2c"
 }
 
 # --- peerflix (optional) ---
@@ -111,6 +112,16 @@ if ($missing -contains "mpv" -and $winget) {
     }
 }
 
+if ($missing -contains "aria2c" -and $winget) {
+    Info "Installing aria2c..."
+    winget install "aria2.aria2" --accept-package-agreements 2>&1 | Out-Null
+    if (Get-Command aria2c -ErrorAction SilentlyContinue) {
+        Ok "aria2c installed"
+    } else {
+        Warn "aria2c installation may need a restart. Install manually: winget install aria2.aria2"
+    }
+}
+
 if ($missing -contains "webtorrent") {
     Info "Installing WebTorrent library (npm install)..."
     Push-Location $scriptDir
@@ -123,7 +134,7 @@ if ($missing -contains "webtorrent") {
     }
 }
 
-Section "Installing optional tools"
+Section "Optional tools"
 
 if (-not $found.peerflix -and $winget) {
     $ans = Read-Host "  Install peerflix? (needed for 'p' engine) [Y/n]"
