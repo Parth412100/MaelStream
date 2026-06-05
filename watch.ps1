@@ -324,9 +324,13 @@ function Save-WebTorrent($magnet, $totalSize, $outDir) {
         "$scriptDir\stream-webtorrent.js", "$magnet", "$port", "$tempDir", "$readyFile", "$doneFile"
     )
 
-    $timeout = 120; $elapsed = 0
+    $timeout = 120; $elapsed = 0; $lastStatus = 0
     while (!(Test-Path $readyFile) -and $elapsed -lt $timeout) {
         Start-Sleep -Seconds 2; $elapsed += 2
+        if ($elapsed - $lastStatus -ge 10) {
+            $lastStatus = $elapsed
+            Info "Waiting for WebTorrent to find peers... ($elapsed`s / ${timeout}s)"
+        }
         if ($proc.HasExited -and !(Test-Path $readyFile)) {
             Write-Host ""
             Warn "WebTorrent failed to start."
@@ -345,9 +349,18 @@ function Save-WebTorrent($magnet, $totalSize, $outDir) {
     }
     Remove-Item -Force $readyFile -ErrorAction SilentlyContinue
 
-    Info "Downloading... (waiting for completion)"
+    $lastProgress = 0
     while (!(Test-Path $doneFile)) {
         Start-Sleep -Seconds 2
+        $files = Get-ChildItem -Path $tempDir -File -ErrorAction SilentlyContinue | Where-Object Length -gt 1MB
+        if ($files.Count -gt 0) {
+            $dl = ($files | Measure-Object -Property Length -Sum).Sum
+            $pct = [math]::Round($dl / $totalSize * 100, 1)
+            if ($pct -ne $lastProgress) {
+                $lastProgress = $pct
+                Info "Downloaded: $pct% ($('{0:N2}' -f ($dl/1GB)) GB / $('{0:N2}' -f ($totalSize/1GB)) GB)")
+            }
+        }
         if ($proc.HasExited -and !(Test-Path $doneFile)) {
             Warn "WebTorrent process exited before download completed."
             Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
