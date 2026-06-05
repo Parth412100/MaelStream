@@ -26,7 +26,7 @@ if ($Help -or $Query -eq '-?' -or $Query -eq '--help' -or $Query -eq '/?') {
     .\watch.ps1 "movie name"                     Search and stream
     .\watch.ps1 "movie name" -Auto               Auto-select best result
     .\watch.ps1 "movie name" -Download           Download (no streaming)
-    .\watch.ps1 "movie name" -Keep               Stream + save file after close
+    .\watch.ps1 "movie name" -Keep               Stream + save file after close (resumes partials)
     .\watch.ps1 "movie name" -Engine peerflix    Use specific engine
 
  ENGINES:
@@ -228,11 +228,15 @@ function Get-ShortHash($str) {
 # ─── Engine functions ────────────────────────────────────────────────────
 
 function Stream-WebTorrent($magnet, $totalSize, $keep, $outDir, $name) {
-    $tempDir = "$env:TEMP\wtstream_$(Get-Random)"
-    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+    $partialsRoot = Join-Path $outDir "_partials"
+    $dirName = "$(Sanitize-FileName $name)_$(Get-ShortHash $magnet)"
+    $tempDir = Join-Path $partialsRoot $dirName
+    $resuming = Test-Path $tempDir
+    if (-not $resuming) { New-Item -ItemType Directory -Path $tempDir -Force | Out-Null }
     $port = 8889
     $readyFile = "$env:TEMP\wt_ready_$(Get-Random).tmp"
 
+    if ($resuming) { Info "Resuming partial download..." }
     Info "WebTorrent: finding peers and starting HTTP server..."
     $env:WT_TEMP_DIR = $tempDir
     $proc = Start-Process -FilePath "node" -NoNewWindow -PassThru -ArgumentList @(
@@ -246,7 +250,9 @@ function Stream-WebTorrent($magnet, $totalSize, $keep, $outDir, $name) {
             Write-Host ""
             Warn "WebTorrent engine failed - couldn't find peers."
             if (-not $proc.HasExited) { $proc.Kill() }
-            Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+            if (-not $keep -or -not (Get-ChildItem $tempDir -Recurse -ErrorAction SilentlyContinue)) {
+                Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+            }
             Remove-Item -Force $readyFile -ErrorAction SilentlyContinue
             return $false
         }
@@ -254,7 +260,9 @@ function Stream-WebTorrent($magnet, $totalSize, $keep, $outDir, $name) {
     if (!(Test-Path $readyFile)) {
         Warn "WebTorrent timed out after 30s (no peers yet, but still trying...)"
         if (-not $proc.HasExited) { $proc.Kill() }
-        Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+        if (-not $keep -or -not (Get-ChildItem $tempDir -Recurse -ErrorAction SilentlyContinue)) {
+            Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+        }
         Remove-Item -Force $readyFile -ErrorAction SilentlyContinue
         return $false
     }
@@ -285,15 +293,21 @@ function Stream-WebTorrent($magnet, $totalSize, $keep, $outDir, $name) {
             Move-Item -Path $file.FullName -Destination $dest -Force -ErrorAction SilentlyContinue
             if (Test-Path $dest) {
                 Write-Host "  Saved to: $dest" -ForegroundColor $C.Green
+                Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
             } else {
                 Warn "Failed to save file."
             }
         } else {
-            Warn "Could not find video file to keep."
+            Warn "Could not find video file to keep. Partial saved for resume."
+            Tip "Run the same command again to resume downloading."
         }
     }
     if (-not $proc.HasExited) { $proc.Kill() }
-    Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+    if (-not $keep) {
+        Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+    } elseif ((Get-ChildItem $tempDir -File -Recurse -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum -gt $totalSize) {
+        Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+    }
     return $true
 }
 
@@ -316,8 +330,13 @@ function Stream-Aria2c($magnet, $totalSize, $keep, $outDir, $name) {
         Warn "aria2c not installed - skipping."
         return $false
     }
-    $tempDir = "$env:TEMP\aria2stream_$(Get-Random)"
-    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+    $partialsRoot = Join-Path $outDir "_partials"
+    $dirName = "$(Sanitize-FileName $name)_aria2_$(Get-ShortHash $magnet)"
+    $tempDir = Join-Path $partialsRoot $dirName
+    $resuming = Test-Path $tempDir
+    if (-not $resuming) { New-Item -ItemType Directory -Path $tempDir -Force | Out-Null }
+
+    if ($resuming) { Info "Resuming partial download..." }
     Info "aria2c: starting download..."
 
     $ariaArgs = @(
@@ -333,13 +352,20 @@ function Stream-Aria2c($magnet, $totalSize, $keep, $outDir, $name) {
     while (!$file -and $elapsed -lt $timeout) {
         Start-Sleep -Seconds 2; $elapsed += 2
         if ($ariaProc.HasExited) {
-            Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+            if (-not $keep -or -not (Get-ChildItem $tempDir -Recurse -ErrorAction SilentlyContinue)) {
+                Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+            }
             return $false
         }
         $files = Get-ChildItem -Path $tempDir -File -ErrorAction SilentlyContinue | Where-Object { $_ -notmatch '\.aria2$' -and $_.Length -gt 1MB }
         if ($files.Count -gt 0) { $file = $files[0].FullName }
     }
-    if (!$file) { Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue; return $false }
+    if (!$file) {
+        if (-not $keep -or -not (Get-ChildItem $tempDir -Recurse -ErrorAction SilentlyContinue)) {
+            Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+        }
+        return $false
+    }
 
     $port = 8888
     $svReadyFile = "$env:TEMP\aria2_ready_$(Get-Random).tmp"
@@ -377,16 +403,22 @@ function Stream-Aria2c($magnet, $totalSize, $keep, $outDir, $name) {
             Move-Item -Path $savedFile.FullName -Destination $dest -Force -ErrorAction SilentlyContinue
             if (Test-Path $dest) {
                 Write-Host "  Saved to: $dest" -ForegroundColor $C.Green
+                Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
             } else {
                 Warn "Failed to save file."
             }
         } else {
-            Warn "Could not find file to keep."
+            Warn "Could not find file to keep. Partial saved for resume."
+            Tip "Run the same command again to resume downloading."
         }
     }
     if (-not $serverProc.HasExited) { $serverProc.Kill() }
     if (-not $ariaProc.HasExited) { $ariaProc.Kill() }
-    Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+    if (-not $keep) {
+        Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+    } elseif ((Get-ChildItem $tempDir -File -Recurse -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum -gt $totalSize) {
+        Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue
+    }
     return $true
 }
 
@@ -493,9 +525,13 @@ function Save-Aria2c($magnet, $totalSize, $outDir, $name) {
         Warn "aria2c not installed - skipping."
         return $false
     }
-    # aria2c doesn't support env vars for --dir, so use $env:TEMP to avoid path-with-spaces issues
-    $tempDir = "$env:TEMP\aria2save_$(Get-Random)"
-    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+    $partialsRoot = Join-Path $outDir "_partials"
+    $dirName = "$(Sanitize-FileName $name)_aria2_$(Get-ShortHash $magnet)"
+    $tempDir = Join-Path $partialsRoot $dirName
+    $resuming = Test-Path $tempDir
+    if (-not $resuming) { New-Item -ItemType Directory -Path $tempDir -Force | Out-Null }
+
+    if ($resuming) { Info "Resuming partial download..." }
     Info "aria2c: downloading..."
 
     $ariaArgs = @(
@@ -610,6 +646,22 @@ if ($Download) {
         if ($cancelHandler) { [Console]::remove_CancelKeyPress($cancelHandler) }
     }
 } else {
+    # Check for existing partials when -Keep
+    if ($Keep) {
+        $partialsRoot = Join-Path $OutDir "_partials"
+        $webtorrentDir = Join-Path $partialsRoot "$(Sanitize-FileName $name)_$(Get-ShortHash (Make-Magnet $hash $name))"
+        $aria2cDir = Join-Path $partialsRoot "$(Sanitize-FileName $name)_aria2_$(Get-ShortHash (Make-Magnet $hash $name))"
+        foreach ($pd in @($webtorrentDir, $aria2cDir)) {
+            if (Test-Path $pd) {
+                $partialSize = (Get-ChildItem $pd -File -Recurse -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
+                if ($partialSize -gt 1MB) {
+                    Tip "Resuming partial download ($([math]::Round($partialSize/1GB, 2)) GB cached)"
+                }
+                break
+            }
+        }
+    }
+
     Section "Starting stream"
     Write-Host "  Title:    $name" -ForegroundColor $C.Green
     Write-Host "  Size:     $('{0:N2}' -f ($totalSize/1GB)) GB" -ForegroundColor $C.Cyan
@@ -619,6 +671,7 @@ if ($Download) {
     } else {
         Write-Host "  Engine:   webtorrent (auto-fallback on: peerflix -> aria2c)" -ForegroundColor $C.Magenta
     }
+    if ($Keep) { Write-Host "  Keep:     Save to $OutDir after close" -ForegroundColor $C.Cyan }
     Write-Host "  Press Ctrl+C to stop at any time`n" -ForegroundColor $C.Gray
 
     $engines = @()

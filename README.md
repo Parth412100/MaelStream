@@ -36,7 +36,8 @@ cd MaelStream
 - **Auto-fallback** — if WebTorrent can't find peers after 30s, it automatically tries Peerflix, then aria2c. No manual retry needed.
 - **Pre-flight check** — verifies all dependencies before searching, tells you exactly what's missing
 - **Live progress** — shows `% | MB/s | ETA | peers` during download
-- **Full cleanup** — kills all processes and deletes temp files on exit
+- **Full cleanup** — kills all processes and deletes temp files on exit (partials preserved for resume with `-Keep` and `-Download`)
+- **Persistent resume** — `-Keep` and `-Download` save partials under `_partials/` in your output directory; re-run the same command to pick up where you left off
 
 ---
 
@@ -115,7 +116,7 @@ npm install -g peerflix
 |------|-------|-------------|
 | `-Auto` | | Auto-select the best result (no interactive prompt) |
 | `-Download` | `-d` | Download only (no streaming). Saves to `-OutDir`. Persistent resume on Ctrl+C |
-| `-Keep` | `-k` | Stream now, save the completed file to `-OutDir` when mpv closes |
+| `-Keep` | `-k` | Stream now, save the completed file to `-OutDir` when mpv closes. Persistent resume on Ctrl+C (partials stay in `_partials` until complete) |
 | `-OutDir <path>` | `-o` | Output directory (default: `~\Downloads\MaelStream`) |
 | `-Engine <name>` | `-e` | Force a specific engine: `webtorrent`, `peerflix`, or `aria2c` |
 | `-NoFallback` | | Disable auto-fallback between engines |
@@ -131,7 +132,7 @@ When no specific engine is chosen (default mode), the tool tries engines in orde
 
 Manual engine selection (`p`, `a`, or `-Engine`) disables fallback — respects your choice.
 
-Close `mpv` to stop streaming and clean up temp files. Use `-Keep` to save the file to `~\Downloads\MaelStream\` when done.
+Close `mpv` to stop streaming and clean up temp files. Use `-Keep` to save the file to `~\Downloads\MaelStream\` when done (partials persist in `_partials/` if interrupted — re-run to resume).
 
 ---
 
