@@ -37,9 +37,13 @@ if ($node) {
 }
 
 # --- mpv ---
+$ciMpvDir = "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\mpv-player.mpv-CI.MSVC_Microsoft.Winget.Source_8wekyb3d8bbwe"
 $mpv = Get-Command mpv -ErrorAction SilentlyContinue
 if ($mpv) {
     Ok "mpv - $($mpv.Source)"
+    $found.mpv = $true
+} elseif (Test-Path "$ciMpvDir\mpv.exe") {
+    Ok "mpv (CI build at $ciMpvDir)"
     $found.mpv = $true
 } else {
     Warn "mpv not found"
@@ -105,10 +109,11 @@ if ($missing -contains "nodejs" -and $winget) {
 if ($missing -contains "mpv" -and $winget) {
     Info "Installing mpv (official CI build)..."
     winget install "mpv-player.mpv-CI.MSVC" --accept-package-agreements 2>&1 | Out-Null
-    if (Get-Command mpv -ErrorAction SilentlyContinue) {
-        Ok "mpv installed"
+    $ciMpvDir = "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\mpv-player.mpv-CI.MSVC_Microsoft.Winget.Source_8wekyb3d8bbwe"
+    if (Test-Path "$ciMpvDir\mpv.com") {
+        Ok "mpv installed (CI build)"
     } else {
-        Warn "mpv installation may need a restart. Install manually or from Windows Store."
+        Warn "mpv installation may need a restart. Install manually: winget install mpv-player.mpv-CI.MSVC"
     }
 }
 

@@ -2,6 +2,17 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
+const mimeTypes = {
+    '.mp4': 'video/mp4', '.mkv': 'video/x-matroska', '.avi': 'video/x-msvideo',
+    '.webm': 'video/webm', '.mov': 'video/quicktime', '.m4v': 'video/mp4',
+    '.flv': 'video/x-flv', '.wmv': 'video/x-ms-wmv'
+};
+
+function getContentType(filePath) {
+    const ext = path.extname(filePath).toLowerCase();
+    return mimeTypes[ext] || 'video/mp4';
+}
+
 const dir = process.argv[2];
 const totalSize = parseInt(process.argv[3], 10);
 const port = parseInt(process.argv[4], 10);
@@ -55,7 +66,7 @@ const server = http.createServer((req, res) => {
                 'Content-Range': `bytes ${start}-${serveEnd}/${totalSize}`,
                 'Content-Length': serveSize,
                 'Accept-Ranges': 'bytes',
-                'Content-Type': 'video/mp4',
+                'Content-Type': getContentType(target),
                 'Connection': 'keep-alive'
             });
             stream.pipe(res);
@@ -68,7 +79,7 @@ const server = http.createServer((req, res) => {
         res.writeHead(200, {
             'Content-Length': totalSize,
             'Accept-Ranges': 'bytes',
-            'Content-Type': 'video/mp4'
+            'Content-Type': getContentType(target)
         });
         if (req.method === 'HEAD') return res.end();
         try {

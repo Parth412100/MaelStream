@@ -37,8 +37,16 @@ function formatBytes(bytes) {
     return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
 }
 
+const mimeTypes = {
+    '.mp4': 'video/mp4', '.mkv': 'video/x-matroska', '.avi': 'video/x-msvideo',
+    '.webm': 'video/webm', '.mov': 'video/quicktime', '.m4v': 'video/mp4',
+    '.flv': 'video/x-flv', '.wmv': 'video/x-ms-wmv'
+};
+
 function createFileServer(file, port) {
     const totalSize = file.length;
+    const ext = (file.name && '.' + file.name.split('.').pop().toLowerCase()) || '.mp4';
+    const contentType = mimeTypes[ext] || 'video/mp4';
     const server = http.createServer((req, res) => {
         const range = req.headers.range;
         if (range) {
@@ -54,7 +62,7 @@ function createFileServer(file, port) {
                 'Content-Range': `bytes ${start}-${end}/${totalSize}`,
                 'Content-Length': end - start + 1,
                 'Accept-Ranges': 'bytes',
-                'Content-Type': 'video/mp4',
+                'Content-Type': contentType,
                 'Connection': 'keep-alive'
             });
             stream.pipe(res);
@@ -63,9 +71,9 @@ function createFileServer(file, port) {
             res.writeHead(200, {
                 'Content-Length': totalSize,
                 'Accept-Ranges': 'bytes',
-                'Content-Type': 'video/mp4'
-            });
-            if (req.method === 'HEAD') return res.end();
+            'Content-Type': contentType
+        });
+        if (req.method === 'HEAD') return res.end();
             const stream = file.createReadStream();
             stream.pipe(res);
             stream.on('error', () => { try { res.end(); } catch {} });
